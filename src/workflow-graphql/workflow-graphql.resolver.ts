@@ -1,8 +1,11 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, Context, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Context, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { RequirePermissions } from '../common/decorators/permissions.decorator.js';
 import { ApiKeyGuard } from '../common/guards/api-key.guard.js';
+import { PermissionsGuard } from '../common/guards/permissions.guard.js';
 import { resolveOwnerId } from '../common/utils/owner.util.js';
 import { ExecutionStoreService } from '../execution-store/execution-store.service.js';
+import { SecurityAuditService } from '../security-audit/security-audit.service.js';
 import { WorkflowDefinitionService } from '../workflow-definition/workflow-definition.service.js';
 import { WorkflowExecutionService } from '../workflow-execution/workflow-execution.service.js';
 import {
@@ -15,6 +18,8 @@ import {
   ExecutionRecordModel,
   TriggerWorkflowResultModel,
 } from './models/execution-record.model.js';
+import { AuthAuditEventModel } from './models/auth-audit-event.model.js';
+import { AuthAuditEventPageModel } from './models/auth-audit-event-page.model.js';
 import { ExecutionEventModel } from './models/execution-event.model.js';
 import { WorkflowDefinitionModel } from './models/workflow-definition.model.js';
 
@@ -24,6 +29,7 @@ export class WorkflowGraphqlResolver {
     private readonly workflowExecutionService: WorkflowExecutionService,
     private readonly executionStoreService: ExecutionStoreService,
     private readonly workflowDefinitionService: WorkflowDefinitionService,
+    private readonly securityAuditService: SecurityAuditService,
   ) {}
 
   @Query(() => [WorkflowDefinitionModel], { name: 'workflowDefinitions' })
@@ -50,7 +56,77 @@ export class WorkflowGraphqlResolver {
     return await this.executionStoreService.getEvents(executionId, ownerId);
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('security:audit:read')
+  @Query(() => [AuthAuditEventModel], { name: 'authAuditEvents' })
+  async authAuditEvents(
+    @Context() ctx: { req?: { headers?: Record<string, unknown>; user?: Record<string, unknown> } },
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number,
+    @Args('cursor', { type: () => Int, nullable: true }) cursor?: number,
+    @Args('from', { type: () => String, nullable: true }) from?: string,
+    @Args('to', { type: () => String, nullable: true }) to?: string,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+    @Args('authType', { type: () => String, nullable: true }) authType?: string,
+  ) {
+    const ownerId = this.resolveOwnerId(ctx);
+    return await this.securityAuditService.listByOwner(ownerId, {
+      limit: limit ?? 50,
+      cursor,
+      from,
+      to,
+      reason,
+      authType,
+    });
+  }
+
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('security:audit:read')
+  @Query(() => AuthAuditEventPageModel, { name: 'authAuditEventsPage' })
+  async authAuditEventsPage(
+    @Context() ctx: { req?: { headers?: Record<string, unknown>; user?: Record<string, unknown> } },
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number,
+    @Args('cursor', { type: () => Int, nullable: true }) cursor?: number,
+    @Args('from', { type: () => String, nullable: true }) from?: string,
+    @Args('to', { type: () => String, nullable: true }) to?: string,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+    @Args('authType', { type: () => String, nullable: true }) authType?: string,
+  ) {
+    const ownerId = this.resolveOwnerId(ctx);
+    return await this.securityAuditService.listPageByOwner(ownerId, {
+      limit: limit ?? 50,
+      cursor,
+      from,
+      to,
+      reason,
+      authType,
+    });
+  }
+
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('security:audit:read')
+  @Query(() => String, { name: 'authAuditEventsCsv' })
+  async authAuditEventsCsv(
+    @Context() ctx: { req?: { headers?: Record<string, unknown>; user?: Record<string, unknown> } },
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number,
+    @Args('cursor', { type: () => Int, nullable: true }) cursor?: number,
+    @Args('from', { type: () => String, nullable: true }) from?: string,
+    @Args('to', { type: () => String, nullable: true }) to?: string,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+    @Args('authType', { type: () => String, nullable: true }) authType?: string,
+  ) {
+    const ownerId = this.resolveOwnerId(ctx);
+    return await this.securityAuditService.exportCsvByOwner(ownerId, {
+      limit: limit ?? 50,
+      cursor,
+      from,
+      to,
+      reason,
+      authType,
+    });
+  }
+
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('workflow:trigger')
   @Mutation(() => TriggerWorkflowResultModel, { name: 'triggerWorkflow' })
   async triggerWorkflow(
     @Context() ctx: { req?: { headers?: Record<string, unknown> } },
@@ -62,10 +138,12 @@ export class WorkflowGraphqlResolver {
       input.workflowId,
       input.input,
       input.correlationId,
+      input.idempotencyKey,
     );
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('workflow:write')
   @Mutation(() => WorkflowDefinitionModel, { name: 'createWorkflowDefinition' })
   async createWorkflowDefinition(
     @Context() ctx: { req?: { headers?: Record<string, unknown> } },
@@ -80,7 +158,8 @@ export class WorkflowGraphqlResolver {
     }, ownerId);
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('workflow:write')
   @Mutation(() => WorkflowDefinitionModel, { name: 'updateWorkflowDefinition' })
   async updateWorkflowDefinition(
     @Context() ctx: { req?: { headers?: Record<string, unknown> } },
@@ -94,7 +173,8 @@ export class WorkflowGraphqlResolver {
     }, ownerId);
   }
 
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyGuard, PermissionsGuard)
+  @RequirePermissions('workflow:write')
   @Mutation(() => Boolean, { name: 'deleteWorkflowDefinition' })
   async deleteWorkflowDefinition(
     @Context() ctx: { req?: { headers?: Record<string, unknown> } },

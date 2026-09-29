@@ -6,12 +6,17 @@ import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/ap
 import { GraphQLModule } from '@nestjs/graphql';
 import { join } from 'node:path';
 import { GraphQLJSON } from 'graphql-type-json';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { WorkflowGraphqlModule } from './workflow-graphql/workflow-graphql.module.js';
 import { WorkflowExecutionModule } from './workflow-execution/workflow-execution.module.js';
 import { WorkflowDefinitionModule } from './workflow-definition/workflow-definition.module.js';
 import { ExecutionStreamModule } from './event-stream/execution-stream.module.js';
 import { NodeRuntimeModule } from './node-runtime/node-runtime.module.js';
 import { QueueModule } from './queue/queue.module.js';
+import { HealthModule } from './health/health.module.js';
+import { AppThrottlerGuard } from './common/guards/throttler.guard.js';
+import { SecurityAuditModule } from './security-audit/security-audit.module.js';
 
 @Module({
   imports: [
@@ -44,14 +49,30 @@ import { QueueModule } from './queue/queue.module.js';
         port: Number(process.env.REDIS_PORT || 6379),
       },
     }),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60_000,
+          limit: 120,
+        },
+      ],
+    }),
     WorkflowExecutionModule,
     WorkflowDefinitionModule,
     ExecutionStreamModule,
     NodeRuntimeModule,
     QueueModule,
     WorkflowGraphqlModule,
+    HealthModule,
+    SecurityAuditModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: AppThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

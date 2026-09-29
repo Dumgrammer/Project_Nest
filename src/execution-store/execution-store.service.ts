@@ -22,6 +22,7 @@ export class ExecutionStoreService {
     workflowId: string;
     input: Record<string, unknown>;
     correlationId?: string;
+    idempotencyKey?: string;
   }): Promise<ExecutionRecord> {
     const record = this.executionRepo.create({
       executionId: params.executionId,
@@ -29,10 +30,29 @@ export class ExecutionStoreService {
       workflowId: params.workflowId,
       status: 'queued',
       correlationId: params.correlationId,
+      idempotencyKey: params.idempotencyKey,
       input: params.input,
     });
     await this.executionRepo.save(record);
     return this.toRecord(record, []);
+  }
+
+  async findByIdempotencyKey(
+    ownerId: string,
+    workflowId: string,
+    idempotencyKey: string,
+  ): Promise<ExecutionRecord | null> {
+    const record = await this.executionRepo.findOne({
+      where: { ownerId, workflowId, idempotencyKey },
+    });
+    if (!record) {
+      return null;
+    }
+    const events = await this.eventRepo.find({
+      where: { executionId: record.executionId },
+      order: { id: 'ASC' },
+    });
+    return this.toRecord(record, events);
   }
 
   async markRunning(executionId: string): Promise<void> {
@@ -116,6 +136,7 @@ export class ExecutionStoreService {
       workflowId: record.workflowId,
       status: record.status as ExecutionStatus,
       correlationId: record.correlationId,
+      idempotencyKey: record.idempotencyKey,
       input: record.input,
       startedAt: record.startedAt,
       finishedAt: record.finishedAt,

@@ -7,4 +7,8 @@ export class TriggerWorkflowDto {
   @IsOptional()
   @IsString()
   correlationId?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

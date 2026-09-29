@@ -13,7 +13,7 @@ export function resolveOwnerId(request: OwnerRequestLike | undefined): string {
     return fromJwt;
   }
 
-  const allowHeaderFallback = process.env.ALLOW_OWNER_HEADER_FALLBACK !== 'false';
+  const allowHeaderFallback = isHeaderFallbackEnabled();
   if (allowHeaderFallback) {
     const fromHeader = resolveOwnerIdFromHeaders(request?.headers);
     if (fromHeader !== DEFAULT_OWNER_ID) {
@@ -61,4 +61,13 @@ function resolveOwnerIdFromUserClaims(
   }
 
   return null;
+}
+
+function isHeaderFallbackEnabled(): boolean {
+  const configured = process.env.ALLOW_OWNER_HEADER_FALLBACK;
+  if (configured !== undefined) {
+    return configured !== 'false';
+  }
+
+  return process.env.NODE_ENV !== 'production';
 }

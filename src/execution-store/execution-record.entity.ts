@@ -18,6 +18,9 @@ export class ExecutionRecordEntity {
   @Column({ type: 'varchar', nullable: true })
   correlationId?: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  idempotencyKey?: string;
+
   @Column({ type: 'simple-json', nullable: true })
   input?: Record<string, unknown>;
 

@@ -8,6 +8,7 @@ import { ExecutionStoreService } from '../src/execution-store/execution-store.se
 import { WorkflowDefinitionService } from '../src/workflow-definition/workflow-definition.service.js';
 import { WorkflowExecutionService } from '../src/workflow-execution/workflow-execution.service.js';
 import { WorkflowGraphqlResolver } from '../src/workflow-graphql/workflow-graphql.resolver.js';
+import { SecurityAuditService } from '../src/security-audit/security-audit.service.js';
 
 describe('WorkflowGraphqlResolver (e2e)', () => {
   let app: INestApplication;
@@ -53,6 +54,32 @@ describe('WorkflowGraphqlResolver (e2e)', () => {
     remove: vi.fn().mockResolvedValue(true),
   };
 
+  const securityAuditService = {
+    listByOwner: vi.fn().mockResolvedValue([
+      {
+        id: 1,
+        ownerId: 'public',
+        action: 'WorkflowGraphqlResolver.triggerWorkflow',
+        reason: 'auth.permissions.missing',
+        timestamp: new Date().toISOString(),
+      },
+    ]),
+    listPageByOwner: vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 2,
+          ownerId: 'public',
+          action: 'WorkflowGraphqlResolver.triggerWorkflow',
+          reason: 'auth.permissions.missing',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      nextCursor: 2,
+    }),
+    exportCsvByOwner: vi.fn().mockResolvedValue('id,ownerId\na,b'),
+    recordDeniedAttempt: vi.fn().mockResolvedValue(undefined),
+  };
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [
@@ -77,6 +104,10 @@ describe('WorkflowGraphqlResolver (e2e)', () => {
         {
           provide: WorkflowDefinitionService,
           useValue: workflowDefinitionService,
+        },
+        {
+          provide: SecurityAuditService,
+          useValue: securityAuditService,
         },
       ],
     }).compile();
@@ -130,6 +161,33 @@ describe('WorkflowGraphqlResolver (e2e)', () => {
       'wf-hello',
       { message: 'from test' },
       undefined,
+      undefined,
+    );
+  });
+
+  it('passes idempotency key to trigger mutation', async () => {
+    await request(app.getHttpServer())
+      .post('/graphql')
+      .set('x-api-key', 'dev-key')
+      .send({
+        query:
+          'mutation($input: TriggerWorkflowInput!) { triggerWorkflow(input: $input) { executionId status } }',
+        variables: {
+          input: {
+            workflowId: 'wf-hello',
+            input: { message: 'from test' },
+            idempotencyKey: 'idem-1',
+          },
+        },
+      })
+      .expect(200);
+
+    expect(workflowExecutionService.trigger).toHaveBeenCalledWith(
+      'public',
+      'wf-hello',
+      { message: 'from test' },
+      undefined,
+      'idem-1',
     );
   });
 
@@ -250,5 +308,67 @@ describe('WorkflowGraphqlResolver (e2e)', () => {
 
     expect(response.body.data.deleteWorkflowDefinition).toBe(true);
     expect(workflowDefinitionService.remove).toHaveBeenCalledWith('wf-new', 'public');
+  });
+
+  it('queries auth audit events', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/graphql')
+      .set('x-api-key', 'dev-key')
+      .send({
+        query:
+          'query { authAuditEvents(limit: 10, reason: "auth.permissions.missing", authType: "jwt") { id ownerId action reason } }',
+      })
+      .expect(200);
+
+    expect(response.body.data.authAuditEvents).toHaveLength(1);
+    expect(securityAuditService.listByOwner).toHaveBeenCalledWith('public', {
+      limit: 10,
+      cursor: undefined,
+      from: undefined,
+      to: undefined,
+      reason: 'auth.permissions.missing',
+      authType: 'jwt',
+    });
+  });
+
+  it('queries paginated auth audit events', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/graphql')
+      .set('x-api-key', 'dev-key')
+      .send({
+        query: 'query { authAuditEventsPage(limit: 5, cursor: 99) { nextCursor items { id ownerId } } }',
+      })
+      .expect(200);
+
+    expect(response.body.data.authAuditEventsPage.items).toHaveLength(1);
+    expect(securityAuditService.listPageByOwner).toHaveBeenCalledWith('public', {
+      limit: 5,
+      cursor: 99,
+      from: undefined,
+      to: undefined,
+      reason: undefined,
+      authType: undefined,
+    });
+  });
+
+  it('queries auth audit csv export', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/graphql')
+      .set('x-api-key', 'dev-key')
+      .send({
+        query:
+          'query { authAuditEventsCsv(limit: 5, authType: "api_key") }',
+      })
+      .expect(200);
+
+    expect(response.body.data.authAuditEventsCsv).toContain('id,ownerId');
+    expect(securityAuditService.exportCsvByOwner).toHaveBeenCalledWith('public', {
+      limit: 5,
+      cursor: undefined,
+      from: undefined,
+      to: undefined,
+      reason: undefined,
+      authType: 'api_key',
+    });
   });
 });

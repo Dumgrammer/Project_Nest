@@ -11,4 +11,7 @@ export class TriggerWorkflowInput {
 
   @Field({ nullable: true })
   correlationId?: string;
+
+  @Field({ nullable: true })
+  idempotencyKey?: string;
 }

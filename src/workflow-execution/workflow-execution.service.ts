@@ -26,17 +26,55 @@ export class WorkflowExecutionService {
     workflowId: string,
     input: Record<string, unknown>,
     correlationId?: string,
+    idempotencyKey?: string,
   ) {
     validateWorkflowInput(input);
+    const normalizedIdempotencyKey = idempotencyKey?.trim() || undefined;
+    if (normalizedIdempotencyKey) {
+      const existing = await this.executionStore.findByIdempotencyKey(
+        ownerId,
+        workflowId,
+        normalizedIdempotencyKey,
+      );
+      if (existing) {
+        this.logger.log(
+          JSON.stringify({
+            message: 'Idempotent trigger replayed existing execution',
+            ownerId,
+            workflowId,
+            executionId: existing.executionId,
+            idempotencyKey: normalizedIdempotencyKey,
+          }),
+        );
+        return { executionId: existing.executionId, status: existing.status };
+      }
+    }
+
     const executionId = randomUUID();
 
-    await this.executionStore.createQueued({
-      executionId,
-      ownerId,
-      workflowId,
-      input,
-      correlationId,
-    });
+    try {
+      await this.executionStore.createQueued({
+        executionId,
+        ownerId,
+        workflowId,
+        input,
+        correlationId,
+        idempotencyKey: normalizedIdempotencyKey,
+      });
+    } catch (error) {
+      // Handles concurrent requests with the same idempotency key.
+      if (normalizedIdempotencyKey) {
+        const existing = await this.executionStore.findByIdempotencyKey(
+          ownerId,
+          workflowId,
+          normalizedIdempotencyKey,
+        );
+        if (existing) {
+          return { executionId: existing.executionId, status: existing.status };
+        }
+      }
+      throw error;
+    }
     this.logger.log(
       JSON.stringify({
         message: 'Workflow queued',
@@ -44,6 +82,7 @@ export class WorkflowExecutionService {
         ownerId,
         workflowId,
         correlationId,
+        idempotencyKey: normalizedIdempotencyKey,
         input: sanitizeForLog(input),
       }),
     );
@@ -51,7 +90,14 @@ export class WorkflowExecutionService {
     try {
       await this.workflowQueue.add(
         WORKFLOW_EXECUTE_JOB,
-        { executionId, ownerId, workflowId, input, correlationId },
+        {
+          executionId,
+          ownerId,
+          workflowId,
+          input,
+          correlationId,
+          idempotencyKey: normalizedIdempotencyKey,
+        },
         {
           attempts: 3,
           backoff: {
@@ -59,7 +105,7 @@ export class WorkflowExecutionService {
             delay: 1000,
           },
           removeOnComplete: true,
-          removeOnFail: true,
+          removeOnFail: false,
         },
       );
     } catch (error) {

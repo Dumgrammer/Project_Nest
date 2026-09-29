@@ -42,9 +42,10 @@ Common issues:
 | `REDIS_HOST` | `127.0.0.1` | BullMQ Redis host |
 | `REDIS_PORT` | `6379` | BullMQ Redis port |
 | `WORKFLOW_DB_PATH` | `./data/workflow.sqlite` | SQL.js file path |
-| `WORKFLOW_API_KEY` | _(unset)_ | Legacy API key fallback |
+| `WORKFLOW_API_KEY` | `dev-key` in dev/test, _(required in prod to enable API-key mode)_ | Legacy API key fallback |
 | `JWT_SECRET` | _(unset)_ | HS256 secret for auth |
-| `ALLOW_OWNER_HEADER_FALLBACK` | `true` | Set `false` in prod |
+| `ALLOW_OWNER_HEADER_FALLBACK` | `true` in dev/test, `false` in prod by default | Set `false` in prod |
+| `ALLOW_API_KEY_AUTHZ_BYPASS` | `true` in dev/test, `false` in prod by default | Allow API key path to bypass permission-claim checks |
 
 See [`docs/auth.md`](./auth.md) for auth setup.
 
@@ -76,7 +77,12 @@ Migrations executed:
 
 - `attempts: 3`
 - `backoff: { type: 'exponential', delay: 1000 }`
-- `removeOnComplete: 100`, `removeOnFail: 500`
+- `removeOnComplete: true`, `removeOnFail: false`
+
+Dead-letter behavior:
+
+- Final-attempt failures are copied to `workflow-dead-letter` queue.
+- Dead-letter payload includes `executionId`, `ownerId`, `workflowId`, `idempotencyKey`, `attemptsMade`, and `errorMessage`.
 
 Inspect queue with any BullMQ dashboard (e.g. Bull Board) pointed at the same Redis.
 
@@ -90,7 +96,41 @@ Inspect queue with any BullMQ dashboard (e.g. Bull Board) pointed at the same Re
 
 ---
 
-## 7. Troubleshooting
+## 7. Health Checks & Rate Limiting
+
+- Liveness: `GET /health/live`
+- Readiness: `GET /health/ready` (DB + Redis checks)
+- Global throttle: `120` requests per `60` seconds per client key
+- Health endpoints are excluded from throttling to avoid false negatives during probes
+
+---
+
+## 8. Idempotency
+
+- Clients can send `Idempotency-Key` header (REST) or `idempotencyKey` in GraphQL trigger input.
+- Reusing the same key for the same `ownerId + workflowId` returns the existing execution instead of creating a duplicate.
+- Idempotency keys are persisted in `workflow_executions.idempotencyKey` with unique index:
+  `ownerId + workflowId + idempotencyKey`
+
+---
+
+## 9. Security Audit Trail
+
+- Denied auth/authorization attempts are persisted in `workflow_auth_audit_events`.
+- Includes owner, action, reason, auth type, endpoint, method, timestamp, and sanitized metadata.
+- Access feeds:
+  - REST: `GET /security/audit-events?limit=50&from=<iso>&to=<iso>&reason=<code>&authType=<jwt|api_key>`
+  - GraphQL: `authAuditEvents(limit: Int, from: String, to: String, reason: String, authType: String)`
+- Cursor paging:
+  - REST: `GET /security/audit-events/page?limit=50&cursor=<eventId>&...`
+  - GraphQL: `authAuditEventsPage(limit: Int, cursor: Int, from: String, to: String, reason: String, authType: String)`
+- CSV exports:
+  - REST: `GET /security/audit-events.csv?...`
+  - GraphQL: `authAuditEventsCsv(...)`
+
+---
+
+## 10. Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 | --- | --- | --- |
@@ -103,7 +143,7 @@ Inspect queue with any BullMQ dashboard (e.g. Bull Board) pointed at the same Re
 
 ---
 
-## 8. Testing
+## 11. Testing
 
 ```bash
 npm test           # unit + service tests
@@ -114,7 +154,7 @@ Suite covers happy path, failure path, error policies (`fail` / `continue` / `fa
 
 ---
 
-## 9. Production Checklist
+## 12. Production Checklist
 
 - [ ] Set strong `JWT_SECRET`
 - [ ] Set `ALLOW_OWNER_HEADER_FALLBACK=false`

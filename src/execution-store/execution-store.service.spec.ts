@@ -66,6 +66,20 @@ describe('ExecutionStoreService', () => {
     expect(record.finishedAt).toBeDefined();
   });
 
+  it('finds execution by idempotency key', async () => {
+    await service.createQueued({
+      executionId: 'exec-3',
+      ownerId: 'tenant-a',
+      workflowId: 'wf-hello',
+      input: { foo: 'bar' },
+      idempotencyKey: 'idem-1',
+    });
+
+    const record = await service.findByIdempotencyKey('tenant-a', 'wf-hello', 'idem-1');
+    expect(record).not.toBeNull();
+    expect(record?.executionId).toBe('exec-3');
+  });
+
   it('throws NotFoundException for unknown execution id', async () => {
     await expect(service.getRecord('missing')).rejects.toThrow(NotFoundException);
     await expect(service.getEvents('missing')).rejects.toThrow(NotFoundException);

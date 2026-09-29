@@ -8,6 +8,7 @@ export interface ExecutionRecord {
   workflowId: string;
   status: ExecutionStatus;
   correlationId?: string;
+  idempotencyKey?: string;
   input?: Record<string, unknown>;
   startedAt?: string;
   finishedAt?: string;
